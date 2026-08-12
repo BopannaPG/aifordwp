@@ -1,0 +1,7 @@
+# Leadership Update — Windows 11 Migration Executive Summary
+Date: 2026-08-12
+Audience: Non-technical management
+
+The migration is delivering a broadly positive experience for most end users. Early issues that were disrupting access and day-to-day work have mostly stabilized, and people are reporting smoother sign-in, more reliable remote access, and fewer file availability concerns than in the first phase. Overall confidence in the new environment is improving, and teams are spending less time on basic access problems and more time on normal business work. Feedback also shows that users are adapting to the new setup, with many concerns now shifting from major disruption to targeted usability improvements.
+
+Two areas still need focused attention. First, the third-floor printing issue remains unresolved and is causing visible frustration for affected teams; this has been escalated for urgent remediation with local support and vendor coordination. Second, a newer pattern of Excel instability on larger finance files is impacting productivity and risks rework when unsaved changes are lost; this is being treated as a high-priority application reliability issue with targeted diagnostics, workaround guidance, and rapid follow-up communications. We are maintaining daily monitoring, prioritizing user-facing fixes in sequence of business impact, and providing leadership with frequent status updates until both issues are fully closed.
