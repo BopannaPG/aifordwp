@@ -13,89 +13,59 @@ Notes:
 - "Detection result: Not detected" is a state/result, not an install error code.
 - No additional numeric installer or Intune-specific error code is visible in this excerpt.
 
-## 2) Ranked remediation plan (most likely fix first)
+## 2) Ranked likely causes (weighted by timing clue: overnight image update to one pool only)
 
-### 1. Fix packaging/context mismatch and command-line prerequisites
-Why this is first:
-- 1603 is most commonly caused by install context issues, bad command line, missing source files, or prerequisite/custom action failure.
+### 1. New base image in that pool introduced a prerequisite gap or MSI custom action failure
+Why this cause fits the scope facts:
+- Timing strongly matches: failures begin after an overnight image change and are isolated to one pool, which is classic image-drift behavior.
+- Install runs in SYSTEM and fails quickly (~40-45 seconds) with 1603 on both initial and retry, consistent with early prerequisite/custom action checks failing before full install.
 
-Specific checks:
-- Confirm Intune install command in app configuration exactly matches tested command line.
-- Validate that AcrobatPro.msi exists in the extracted content root used by Intune IME at install time.
-- Confirm SYSTEM-context install succeeds locally using the same command line (PsExec SYSTEM test).
-- Add full MSI logging to command for one test deployment:
-  - msiexec /i AcrobatPro.msi /qn /norestart /L*v C:\Windows\Temp\AcrobatPro-Install.log
-- Review MSI verbose log for first "Return value 3" block and failing custom action.
+Fastest single check:
+- On one affected VM from that pool, run the same command under SYSTEM with verbose logging and inspect the first "Return value 3" block:
+  - msiexec /i AcrobatPro.msi /qn /norestart /L*v C:\Windows\Temp\AcrobatPro-1603.log
 
-Status against Microsoft docs:
-- [VERIFY AGAINST MICROSOFT DOCS] MSI 1603 troubleshooting patterns and verbose log interpretation.
-- [VERIFY AGAINST MICROSOFT DOCS] Intune Win32 app command-line and content staging behavior.
+### 2. Adobe product conflict on the updated image (Reader/older Acrobat or shared component collision)
+Why this cause fits the scope facts:
+- Pool-specific overnight image updates commonly add or change preinstalled software, including Reader baselines.
+- Acrobat Pro MSI commonly throws 1603 when conflicting Adobe components, mutexes, or upgrade paths are present.
 
-### 2. Correct detection rule targeting (possible product mismatch)
-Why this is second:
-- Detection is currently checking HKLM\SOFTWARE\Adobe\Acrobat Reader\23.0 while the app is "Adobe Acrobat Pro". Reader vs Pro key mismatch can cause endless retry behavior even if install partially succeeds.
+Fastest single check:
+- Compare one affected VM vs one unaffected pool VM for installed Adobe products (same timestamp window) and look for version/edition conflict deltas.
 
-Specific checks:
-- Confirm correct product edition key/path for Acrobat Pro (not Reader).
-- Prefer MSI product code detection where possible for reliability.
-- If using registry detection, verify:
-  - Correct hive (including WOW6432Node considerations)
-  - Correct key for installed edition/version
-  - Correct value name/type/expected data
-- Re-run detection script/check manually on a known-good machine.
+### 3. Detection rule points to Reader path while deploying Pro, causing repeated retries and operational noise
+Why this cause fits the scope facts:
+- Detection checks HKLM\SOFTWARE\Adobe\Acrobat Reader\23.0 while the app being installed is Adobe Acrobat Pro v23.6.
+- This mismatch does not create 1603 directly, but it guarantees "Not detected" and repeated retries, amplifying impact and obscuring signal.
 
-Status against Microsoft docs:
-- [VERIFY AGAINST MICROSOFT DOCS] Recommended Win32 app detection rule design (MSI/product-code vs registry).
+Fastest single check:
+- Validate detection target on a known-good Pro device: confirm whether the configured registry key/value can ever be true for Acrobat Pro.
 
-### 3. Remove conflicting pre-existing Adobe components and pending reboot state
-Why this is third:
-- 1603 frequently occurs when older Adobe products/components, running Adobe processes, or pending reboot state blocks installation.
+### 4. Content/path issue in staged Intune payload for this assignment ring (missing MST/CAB/dependency alongside MSI)
+Why this cause fits the scope facts:
+- Quick-fail 1603 can occur if MSI launches but cannot locate required companion files.
+- If the issue aligns to one pool/ring after overnight changes, staged content or package revision drift is plausible without affecting all pools.
 
-Specific checks:
-- Check for installed Adobe Reader/Acrobat versions and uninstall conflicts.
-- Check for running Adobe-related processes/services during install window.
-- Verify pending reboot indicators:
-  - HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired
-  - Component Based Servicing pending reboot markers
-- Reboot device, then force policy sync and retry deployment.
+Fastest single check:
+- From an affected device, inspect IME staging folder for this app and confirm all expected files referenced by MSI (and any transform/dependency) exist at runtime.
 
-Status against Microsoft docs:
-- [VERIFY AGAINST MICROSOFT DOCS] Known 1603 causes: conflicting versions, in-use files, pending reboot.
+### 5. Pending reboot or service state introduced by image maintenance window
+Why this cause fits the scope facts:
+- Overnight maintenance can leave reboot-pending or transient servicing states that frequently map to generic 1603.
+- Repeated hourly retries failing in the same pattern are compatible with an unresolved reboot/service lock condition.
 
-### 4. Validate assignment filters, requirement rules, and architecture targeting
-Why this is fourth:
-- Incorrect requirements can result in inappropriate targeting and repeated failed retries on unsupported device states.
-
-Specific checks:
-- Confirm requirement rules match endpoint architecture/OS version.
-- Verify install behavior is set for system install as intended.
-- Confirm no conflicting supersedence or dependency app states.
-- Validate assignment scope and exclusion groups.
-
-Status against Microsoft docs:
-- [VERIFY AGAINST MICROSOFT DOCS] Intune Win32 requirement/dependency/supersedence evaluation order.
-
-### 5. Repackage app content if hash/corruption/source path issues are suspected
-Why this is fifth:
-- If content extraction is incomplete/corrupted, MSI can fail with generic 1603.
-
-Specific checks:
-- Rebuild .intunewin package from clean source media.
-- Ensure MSI and transform/files are in expected relative paths.
-- Redeploy as a new app revision and test on pilot device.
-
-Status against Microsoft docs:
-- [VERIFY AGAINST MICROSOFT DOCS] IntuneWin packaging best practices and content validation.
+Fastest single check:
+- On an affected VM, check reboot-pending markers in registry/CBS, then perform one controlled reboot and immediate retry of the install.
 
 ## 3) Immediate triage actions (recommended execution order)
 
-1. Run one controlled install with full MSI verbose logging under SYSTEM context.
-2. Correct detection rule to confirmed Acrobat Pro detection target.
-3. Remove conflicting Adobe versions and clear reboot-pending state.
-4. Re-test deployment on one pilot endpoint, then expand.
+1. Run one controlled SYSTEM-context install with verbose MSI logging on one affected pool VM.
+2. Compare Adobe footprint and prerequisite state between affected and unaffected pool images.
+3. Validate and correct detection logic for Acrobat Pro (prefer MSI product-code detection where possible).
+4. Confirm staged package completeness on an affected endpoint and re-test.
 
 ## 4) Confidence and uncertainty
 
-- High confidence: 1603 is the distinct repeated install code in the provided excerpt.
-- Moderate confidence: detection rule likely mismatched (Reader key for Pro package), but this must be confirmed on a successfully installed reference endpoint.
-- Uncertain without additional logs: exact failing MSI custom action or prerequisite; MSI verbose log is required for definitive root cause.
+- High confidence: 1603 is the repeated installer failure code in the provided excerpt.
+- High confidence: timing/isolation clue (overnight image update, one pool only) should be weighted heavily toward image-specific causes.
+- Moderate confidence: detection-rule mismatch is present and operationally important, but may be parallel to (not the direct source of) 1603.
+- Uncertain without MSI verbose log: exact failing custom action/prerequisite remains unproven; do not commit to a single cause yet.
